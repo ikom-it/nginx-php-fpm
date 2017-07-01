@@ -1,11 +1,11 @@
 FROM php:7.1.6-fpm-alpine
 
-MAINTAINER ngineered <support@ngineered.co.uk>
+MAINTAINER IKOM <florian@ikom.fr>
 
 ENV php_conf /usr/local/etc/php-fpm.conf
 ENV fpm_conf /usr/local/etc/php-fpm.d/www.conf
 ENV php_vars /usr/local/etc/php/conf.d/docker-vars.ini
-
+ENV APCU_VERSION 5.1.8
 ENV NGINX_VERSION 1.13.1
 
 RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
@@ -142,6 +142,9 @@ RUN echo @testing http://nl.alpinelinux.org/alpine/edge/testing >> /etc/apk/repo
     curl \
     libcurl \
     git \
+    autoconf \
+    libmemcached-dev \
+    make \
     python \
     python-dev \
     py-pip \
@@ -168,6 +171,7 @@ RUN echo @testing http://nl.alpinelinux.org/alpine/edge/testing >> /etc/apk/repo
       --with-jpeg-dir=/usr/include/ && \
     #curl iconv session
     docker-php-ext-install pdo_mysql pdo_sqlite mysqli mcrypt gd exif intl xsl json soap dom zip opcache && \
+    pecl install xdebug && \
     docker-php-source delete && \
     mkdir -p /etc/nginx && \
     mkdir -p /var/www/app && \
@@ -183,6 +187,24 @@ RUN echo @testing http://nl.alpinelinux.org/alpine/edge/testing >> /etc/apk/repo
     mkdir -p /etc/letsencrypt/webrootauth && \
     apk del gcc musl-dev linux-headers libffi-dev augeas-dev python-dev
 #    ln -s /usr/bin/php7 /usr/bin/php
+
+RUN apk add --no-cache --virtual .build-deps \
+		$PHPIZE_DEPS \
+	&& pecl install apcu-${APCU_VERSION} redis  \
+  && docker-php-ext-enable apcu redis  \
+	&& apk del .build-deps
+
+ENV MEMCACHED_DEPS zlib-dev libmemcached-dev cyrus-sasl-dev git
+RUN set -xe \
+    && apk add --no-cache \
+        --virtual .memcached-deps \
+        $MEMCACHED_DEPS \
+    && git clone -b php7 https://github.com/php-memcached-dev/php-memcached /usr/src/php/ext/memcached \
+    && docker-php-ext-configure /usr/src/php/ext/memcached \
+        --disable-memcached-sasl \
+    && docker-php-ext-install /usr/src/php/ext/memcached \
+    && rm -rf /usr/src/php/ext/memcached \
+    && apk del .memcached-deps
 
 ADD conf/supervisord.conf /etc/supervisord.conf
 
@@ -232,12 +254,6 @@ ADD scripts/push /usr/bin/push
 ADD scripts/letsencrypt-setup /usr/bin/letsencrypt-setup
 ADD scripts/letsencrypt-renew /usr/bin/letsencrypt-renew
 RUN chmod 755 /usr/bin/pull && chmod 755 /usr/bin/push && chmod 755 /usr/bin/letsencrypt-setup && chmod 755 /usr/bin/letsencrypt-renew && chmod 755 /start.sh
-
-# copy in code
-ADD src/ /var/www/html/
-ADD errors/ /var/www/errors
-
-VOLUME /var/www/html
 
 EXPOSE 443 80
 
